@@ -3,7 +3,7 @@ cabal-version:       2.4
 --  further documentation, see http://haskell.org/cabal/users-guide/
 
 name:                rady
-version:             0.0.0.0
+version:             1.0.0.0
 -- synopsis:
 -- description:
 homepage:            https://github.com/cheery/haskell-rady

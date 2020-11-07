@@ -1,45 +1,111 @@
-{-# LANGUAGE GADTs, MultiParamTypeClasses, FlexibleInstances #-}
-module Rady where
+{-# LANGUAGE GADTs, MultiParamTypeClasses, FlexibleInstances, TypeApplications, DataKinds, ScopedTypeVariables, TypeFamilies, UndecidableInstances, AllowAmbiguousTypes #-}
+module Rady (
+    Canonical,
+    Unitary,
+    Pass,
+    UnitLike,
+    PairCan,
+    Can,
+    can,
+    pass,
+    anything,
+    eq,
+    opt,
+    Shape(..),
+    parse,
+    lparse,
+    generate,
+    pattern,
+    Pattern(..),
+    deriv,
+    group,
+    alt,
+    vanish,
+    interleave,
+    accept,
+    rejected
+    ) where
 
 import Data.Void
 import Control.Monad (guard)
 
--- |'b' is a canonical form of 'a'
+type family And (a :: Bool) (b :: Bool) :: Bool where
+    And True True = True
+    And _    _    = False
+
+-- |Closed type family describing what a canonical type is.
+type family Canonical a :: Bool where
+    Canonical ((),a) = False
+    Canonical (a,()) = False
+    Canonical (a,b) = And (Canonical a) (Canonical b)
+    Canonical (Either a b) = And (Canonical a) (Canonical b)
+    Canonical (Maybe a) = Canonical a
+    Canonical [a] = Canonical a
+    Canonical (Pass _) = False
+    Canonical _ = True
+
+-- |Closed type family describing what is considered unitary.
+type family Unitary a :: Bool where
+    Unitary ()    = True
+    Unitary (a,b) = And (Unitary a) (Unitary b)
+    Unitary a     = False
+
+newtype Pass a = Pass { unPass :: a }
+
+-- |Corresponding type class for the 'Unitary' type class.
+class UnitLike a where unit :: a
+instance UnitLike () where unit = ()
+instance (UnitLike a, UnitLike b) => UnitLike (a,b) where unit = (unit, unit)
+
+-- |Canonicalization relation, 'b' is a canonical version of the 'a'.
 class Can a b where
     trim :: a -> b
     fill :: b -> a
 
-instance (Can a c) => Can (a, ()) c where
-    trim (a,()) = trim a
-    fill c = (fill c, ())
+-- |The PairCan removes an unitary item from a pair.
+class PairCan (k::Bool) (j::Bool) a b c where
+    trimPairs :: (a,b) -> c
+    fillPairs :: c -> (a,b)
 
-instance (Can b d) => Can ((), b) d where
-    trim ((),b) = trim b
-    fill d = ((), fill d)
+instance (UnitLike (a,b)) => PairCan 'True 'True a b () where
+    trimPairs (_,_) = ()
+    fillPairs () = unit
 
-instance (Can a c, Can b d) => Can (a, b) (c, d) where
-    trim (a,b) = (trim a, trim b)
-    fill (c,d) = (fill c, fill d)
+instance (UnitLike a, Can b c) => PairCan 'True 'False a b c where
+    trimPairs (_,a) = trim a
+    fillPairs a = (unit, fill a)
 
-instance (Can a b) => Can (Maybe a) (Maybe b) where
+instance (Can a c, UnitLike b) => PairCan 'False 'True a b c where
+    trimPairs (a,_) = trim a
+    fillPairs a = (fill a, unit)
+
+instance (Can a c, Can b d) => PairCan 'False 'False a b (c,d) where
+    trimPairs (a,b) = (trim a, trim b)
+    fillPairs (a,b) = (fill a, fill b)
+
+instance (Canonical (a,b) ~ False, PairCan (Unitary a) (Unitary b) a b c) => Can (a,b) c where
+    trim = trimPairs @(Unitary a) @(Unitary b)
+    fill = fillPairs @(Unitary a) @(Unitary b)
+
+instance (Canonical (Either a b) ~ False, Can a c, Can b d) => Can (Either a b) (Either c d) where
+    trim (Left x) = Left (trim x)
+    trim (Right x) = Right (trim x)
+    fill (Left x) = Left (fill x)
+    fill (Right x) = Right (fill x)
+
+instance (Canonical a ~ False, Can a b) => Can (Maybe a) (Maybe b) where
     trim = fmap trim
     fill = fmap fill
 
-instance (Can a c, Can b d) => Can (Either a b) (Either c d) where
-    trim (Left a) = Left (trim a)
-    trim (Right b) = Right (trim b)
-    fill (Left a) = Left (fill a)
-    fill (Right b) = Right (fill b)
-
-instance Can a b => Can [a] [b] where
+instance (Canonical a ~ False, Can a b) => Can [a] [b] where
     trim = fmap trim
     fill = fmap fill
 
-instance Can Void Void where
-    trim = id
-    fill = id
+instance Can (Pass a) a where
+    trim = unPass
+    fill = Pass
 
-instance Can () () where
+instance (Canonical a ~ True) => Can a a where
     trim = id
     fill = id
 
@@ -47,9 +113,13 @@ instance Can () () where
 can :: Can a b => Shape x a -> Shape x b
 can = Iso trim fill
 
+-- |The `can` trims away the 'Pass' but disregards the 'x'.
+pass :: Shape a x -> Shape a (Pass x)
+pass = Iso Pass unPass
+
 -- |Match any item, corresponds to '.'
-any :: Shape x x
-any = Match pure id
+anything :: Shape x x
+anything = Match pure id
 
 -- |Match any item that is equal to pattern, matches to 'a'.
 eq :: Eq a => a -> Shape a ()
